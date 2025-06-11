@@ -1,0 +1,70 @@
+apiVersion: tempo.grafana.com/v1alpha1
+kind: TempoStack
+metadata:
+  name: east
+  namespace: tracing-system
+spec:
+  extraConfig:
+    tempo:
+      ingester:
+        max_block_duration: 2m
+  limits:
+    global:
+      ingestion: {}
+      query:
+        maxSearchDuration: 0s
+  managementState: Managed
+  replicationFactor: 1
+  resources:
+    total:
+      limits:
+        cpu: "4"
+        memory: 10Gi
+  retention:
+    global:
+      traces: 360h0m0s
+  search:
+    defaultResultLimit: 20
+    maxDuration: 0s
+  storage:
+    secret:
+      name: s3-secret
+      type: s3
+    tls:
+      enabled: true
+      caName: tempo-odf-ca
+  storageSize: 100Gi
+  template:
+#    distributor:
+#      tls:
+#        enabled: false
+    gateway:
+      enabled: true
+      ingress:
+        route:
+          termination: reencrypt
+        type: route
+    querier:
+      replicas: 1
+    queryFrontend:
+      component:
+        replicas: 1
+        resources:
+          limits:
+            cpu: "3"
+            memory: 5Gi
+      jaegerQuery:
+        authentication:
+          enabled: false
+          resources:
+        enabled: true
+        ingress:
+          route: {}
+        servicesQueryDuration: 72h0m0s
+        tempoQuery: {}
+  tenants:
+    authentication:
+      - tenantId: 1610b0c3-c509-4592-a256-a1871353dbfa
+        tenantName: istio-dev-east
+    mode: openshift
+  timeout: 1m0s

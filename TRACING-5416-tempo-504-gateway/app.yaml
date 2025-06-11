@@ -1,0 +1,282 @@
+# kubectl port-forward -n tutorial-application svc/frontend-service 4000:4000
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tutorial-application
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tutorial-application-backend2
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tutorial-application-backend1
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel
+  namespace: tutorial-application
+spec:
+  image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.119.0
+  observability:
+    metrics:
+      enableMetrics: true
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc: {}
+          http: {}
+      jaeger:
+        protocols:
+          grpc: {}
+          thrift_http: {}
+          thrift_compact: {}
+          thrift_binary: {}
+      zipkin: {}
+
+    processors:
+      tail_sampling:
+        decision_wait: 5s
+        policies:
+          [
+            {
+              name: policy,
+              type: string_attribute,
+              string_attribute: { key: result, values: ["1", "6"] }
+            }
+          ]
+
+      k8sattributes: {}
+      batch: {}
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 75
+        spike_limit_percentage: 25
+
+    exporters:
+      debug: {}
+
+      otlp:
+        endpoint:  http://dev-collector.tracing-system.svc.cluster.local:4317
+        tls:
+          insecure: true
+
+    service:
+      telemetry:
+        logs:
+          level: "INFO"
+          development: true
+          encoding: "json"
+        metrics:
+          address: 0.0.0.0:8888
+#          readers:
+#            - pull:
+#                exporter:
+#                  prometheus:
+#                    host: '0.0.0.0'
+#                    port: 8889
+          level: detailed
+      pipelines:
+        # Remove this section if Tempo is not deployed
+        traces:
+          receivers: [otlp, jaeger, zipkin]
+          processors: [memory_limiter, k8sattributes, batch]
+          exporters:
+            - debug
+            - otlp
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, batch]
+          exporters:
+            - otlp
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, batch]
+          exporters:
+            - otlp
+---
+### RBAC for k8s attributes processor
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: otel-collector-tutorial-ns
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces", "nodes"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+---
+### RBAC for k8s attributes processor
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: otel-collector-tutorial-ns
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: otel-collector-tutorial-ns
+subjects:
+  - kind: ServiceAccount
+    name: otel-collector
+    namespace: tutorial-application
+---
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: my-instrumentation
+  namespace: tutorial-application
+spec:
+  exporter:
+    endpoint: http://otel-collector.tutorial-application.svc.cluster.local:4317
+  propagators:
+    - tracecontext
+    - baggage
+    - b3
+  sampler:
+    type: parentbased_traceidratio
+    argument: "1"
+  resource:
+    addK8sUIDAttributes: false
+  python:
+    env:
+      # Required if endpoint is set to 4317.
+      # Python autoinstrumentation uses http/proto by default
+      # so data must be sent to 4318 instead of 4317.
+      - name: OTEL_EXPORTER_OTLP_ENDPOINT
+        value: http://otel-collector.tutorial-application.svc.cluster.local:4318
+  java:
+    env:
+      - name: OTEL_LOGS_EXPORTER
+        value: otlp
+      - name: OTEL_INSTRUMENTATION_METHODS_INCLUDE
+        value: io.opentelemetry.dice.RollController[getRandomNumber];
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend1-deployment
+  namespace: tutorial-application-backend1
+  labels:
+    app: backend1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend1
+  template:
+    metadata:
+      labels:
+        app: backend1
+      annotations:
+        instrumentation.opentelemetry.io/inject-python: "tutorial-application/my-instrumentation"
+    spec:
+      containers:
+      - name: backend1
+        image: ghcr.io/pavolloffay/kubecon-eu-2024-opentelemetry-kubernetes-tracing-tutorial-backend1:latest
+        ports:
+        - containerPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend1-service
+  namespace: tutorial-application-backend1
+  labels:
+    app: backend1
+spec:
+  ports:
+  - name: http
+    port: 5000
+    targetPort: 5000
+  selector:
+    app: backend1
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend2-deployment
+  namespace: tutorial-application-backend2
+  labels:
+    app: backend2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend2
+  template:
+    metadata:
+      labels:
+        app: backend2
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "tutorial-application/my-instrumentation"
+    spec:
+      containers:
+      - name: backend2
+        image: ghcr.io/pavolloffay/kubecon-eu-2024-opentelemetry-kubernetes-tracing-tutorial-backend2:latest
+        ports:
+        - containerPort: 5165
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend2-service
+  namespace: tutorial-application-backend2
+spec:
+  ports:
+  - name: http
+    port: 5165
+    targetPort: 5165
+  selector:
+    app: backend2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-deployment
+  namespace: tutorial-application
+  labels:
+    app: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+      annotations:
+        instrumentation.opentelemetry.io/inject-sdk: "tutorial-application/my-instrumentation"
+    spec:
+      containers:
+      - name: frontend
+        image: ghcr.io/pavolloffay/kubecon-eu-2024-opentelemetry-kubernetes-tracing-tutorial-frontend:latest
+        env:
+          - name: OTEL_INSTRUMENTATION_ENABLED
+            value: "true"
+          - name: BACKEND1_URL
+            value: "http://backend1-service.tutorial-application-backend1.svc.cluster.local:5000/rolldice"
+          - name: BACKEND2_URL
+            value: "http://backend2-service.tutorial-application-backend2.svc.cluster.local:5165/rolldice"
+        ports:
+        - containerPort: 4000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: tutorial-application
+spec:
+  ports:
+  - name: http
+    port: 4000
+    targetPort: 4000
+  selector:
+    app: frontend
+
