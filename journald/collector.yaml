@@ -1,0 +1,38 @@
+exporters:
+  debug:
+    verbosity: detailed
+receivers:
+  journald:
+
+processors:
+  transform:
+    log_statements:
+      - context: log
+        statements:
+          - set(severity_number, SEVERITY_NUMBER_DEBUG) where Int(body["PRIORITY"]) == 7
+          - set(severity_number, SEVERITY_NUMBER_INFO) where Int(body["PRIORITY"]) == 6
+          - set(severity_number, SEVERITY_NUMBER_INFO2) where Int(body["PRIORITY"]) == 5
+          - set(severity_number, SEVERITY_NUMBER_WARN) where Int(body["PRIORITY"]) == 4
+          - set(severity_number, SEVERITY_NUMBER_ERROR) where Int(body["PRIORITY"]) == 3
+          - set(severity_number, SEVERITY_NUMBER_FATAL) where Int(body["PRIORITY"]) <= 2
+          - set(severity_text, "DEBUG") where Int(body["PRIORITY"]) == 7
+          - set(severity_text, "INFO") where Int(body["PRIORITY"]) == 6
+          - set(severity_text, "INFO2") where Int(body["PRIORITY"]) == 5
+          - set(severity_text, "WARN") where Int(body["PRIORITY"]) == 4
+          - set(severity_text, "ERROR") where Int(body["PRIORITY"]) == 3
+          - set(severity_text, "FATAL") where Int(body["PRIORITY"]) <= 2
+          - set(resource.attributes["process.pid"], body["_PID"])
+          - set(resource.attributes["process.command_line"], body["_CMDLINE"])
+          - set(resource.attributes["process.command"], body["_COMM"])
+          - set(resource.attributes["process.executable.path"], body["_EXE"])
+#          - set(body, body["MESSAGE"])
+
+service:
+  pipelines:
+    logs:
+      processors:
+        - transform
+      exporters:
+        - debug
+      receivers:
+        - journald
