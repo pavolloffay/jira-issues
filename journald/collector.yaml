@@ -26,12 +26,18 @@ processors:
           - set(resource.attributes["process.command"], body["_COMM"])
           - set(resource.attributes["process.executable.path"], body["_EXE"])
 #          - set(body, body["MESSAGE"])
+  resource:
+    attributes:
+      - action: insert
+        key: service.name
+        value: local-fedora
 
 service:
   pipelines:
     logs:
       processors:
         - transform
+        - resource
       exporters:
         - debug
       receivers:
