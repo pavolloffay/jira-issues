@@ -1,0 +1,120 @@
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: simplest
+spec:
+  networkPolicy:
+    enabled: true
+
+  ports:
+    - name: jaeger-sampling
+      appProtocol: grpc
+      port: 14250
+      protocol: TCP
+      targetPort: 14250
+
+  volumes:
+    - name: sampling-strategies
+      configMap:
+        name: simplest-sampling-strategies
+        items:
+          - key: sampling_strategies.json
+            path: sampling_strategies.json
+  volumeMounts:
+    - mountPath: /etc/otelcol/
+      name: sampling-strategies
+  config:
+    extensions:
+      jaegerremotesampling:
+        source:
+          reload_interval: 30s
+          file: /etc/otelcol/sampling_strategies.json
+
+      health_check/response-body:
+        endpoint: '0.0.0.0:13133'
+        path: /
+      pprof:
+        endpoint: '0.0.0.0:1777'
+      zpages:
+        endpoint: '0.0.0.0:1888'
+
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      jaeger:
+        protocols:
+          thrift_compact:
+            endpoint: 0.0.0.0:6831
+
+    exporters:
+      debug: {}
+
+    service:
+      extensions: [health_check/response-body, pprof, zpages, jaegerremotesampling]
+
+      telemetry:
+        metrics:
+          readers:
+            - pull:
+                exporter:
+                  prometheus:
+                    host: '0.0.0.0'
+                    port: 8888
+      pipelines:
+        traces:
+          receivers: [otlp, jaeger]
+          processors: []
+          exporters: [debug]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: simplest-sampling-strategies
+data:
+  sampling_strategies.json: |
+    {
+      "service_strategies": [
+        {
+          "service": "foo",
+          "type": "probabilistic",
+          "param": 0.8,
+          "operation_strategies": [
+            {
+              "operation": "op1",
+              "type": "probabilistic",
+              "param": 0.2
+            },
+            {
+              "operation": "op2",
+              "type": "probabilistic",
+              "param": 0.4
+            }
+          ]
+        },
+        {
+          "service": "bar",
+          "type": "ratelimiting",
+          "param": 5
+        }
+      ],
+      "default_strategy": {
+        "type": "probabilistic",
+        "param": 0.5,
+        "operation_strategies": [
+          {
+            "operation": "/health",
+            "type": "probabilistic",
+            "param": 0.0
+          },
+          {
+            "operation": "/metrics",
+            "type": "probabilistic",
+            "param": 0.0
+          }
+        ]
+      }
+    }
