@@ -1,0 +1,42 @@
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel
+  namespace: openshift-logging
+spec:
+#  image: otel/opentelemetry-collector-contrib:0.139.0
+  config:
+    exporters:
+      debug:
+        verbosity: detailed
+
+#      otlphttp:
+#        endpoint: tempo-simplest-gateway.chainsaw-bursting-elf.svc.cluster.local:8090
+#        auth:
+#          authenticator: bearertokenauth
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+          # TODO FIXED, it was missing here!
+          http:
+
+    processors:
+      batch: {}
+
+
+    extensions:
+      bearertokenauth:
+        filename: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+    service:
+      extensions: [ bearertokenauth ]
+      pipelines:
+        logs:
+          exporters:
+            - debug
+#            - otlphttp
+          processors:
+            - batch
+          receivers:
+            - otlp
