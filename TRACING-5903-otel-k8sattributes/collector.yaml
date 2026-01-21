@@ -1,0 +1,61 @@
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: otel-collector
+rules:
+  - apiGroups: ['']
+    resources: ['pods', 'namespaces']
+    verbs: ['get', 'watch', 'list']
+  - apiGroups: ['apps']
+    resources: ['replicasets']
+    verbs: ['get', 'watch', 'list']
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: otel-collector
+subjects:
+  - kind: ServiceAccount
+    name: otel-collector
+    namespace: ploffay
+roleRef:
+  kind: ClusterRole
+  name: otel-collector
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel
+  namespace: ploffay
+spec:
+  env:
+    - name: KUBE_NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+  config:
+    exporters:
+      debug:
+        verbosity: detailed
+
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+          http:
+
+    processors:
+      k8sattributes:
+        filter:
+          node_from_env_var: KUBE_NODE_NAME
+
+    service:
+      pipelines:
+        logs:
+          exporters:
+            - debug
+          processors:
+            - k8sattributes
+          receivers:
+            - otlp
